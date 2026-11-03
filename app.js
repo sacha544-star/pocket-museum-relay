@@ -1,6 +1,6 @@
 (() => {
 'use strict';
-const VERSION = '2.2.0';
+const VERSION = '2.2.1';
 const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco', imgs: 'pm_images' };
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 let col = load(K.col, []), rech = load(K.rech, []), par = load(K.par, { url: '', code: '' });
@@ -240,19 +240,24 @@ function decouvertes() {
   }).join('');
   imagesDecouv(l);
 }
-async function imagesDecouv(l) { // une seule recherche eBay par modèle, puis gardée en mémoire
+async function imagesDecouv(l) { // photo eBay par modèle, gardée en mémoire une fois trouvée
   if (!ebayOk()) return;
   const imgs = load(K.imgs, {});
   for (const c of l) {
-    if (imgs[c.reference] !== undefined) continue;
+    if (imgs[c.reference]) continue;
     try {
-      const r = await relais('ebay', { q: c.titre + ' ' + c.reference + ' game watch', limit: 10 });
-      const a = (r.annonces || []).find(x => x.image && !SUSPECT.test(x.titre || ''));
-      imgs[c.reference] = a ? tailleEbay(a.image, 500) : '';
+      let img = '';
+      for (const q of [c.titre + ' ' + c.reference + ' game watch', 'game watch ' + c.titre]) {
+        const r = await relais('ebay', { q, limit: 20 });
+        const a = (r.annonces || []).find(x => x.image && !SUSPECT.test(x.titre || ''));
+        if (a) { img = tailleEbay(a.image, 500); break; }
+      }
+      if (!img) continue;
+      imgs[c.reference] = img;
       localStorage.setItem(K.imgs, JSON.stringify(imgs));
       const el = document.querySelector(`[data-dimg="${c.reference}"]`);
-      if (el && imgs[c.reference]) { el.style.backgroundImage = `url('${imgs[c.reference]}')`; el.innerHTML = ''; }
-    } catch { break; }
+      if (el) { el.style.backgroundImage = `url('${img}')`; el.innerHTML = ''; }
+    } catch (e) { toast('⚠️ Photos eBay : ' + e.message); break; }
   }
 }
 
