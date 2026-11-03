@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'pocket-museum-v2';
+const CACHE = 'pocket-museum-v3';
 const FICHIERS_CORE = ['./', './index.html', './style.css', './app.js', './manifest.json'];
 
 self.addEventListener('install', event => {
