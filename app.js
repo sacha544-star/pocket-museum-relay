@@ -1,7 +1,7 @@
 (() => {
 'use strict';
-const VERSION = '2.1.0';
-const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco' };
+const VERSION = '2.2.0';
+const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco', imgs: 'pm_images' };
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 let col = load(K.col, []), rech = load(K.rech, []), par = load(K.par, { url: '', code: '' });
 const save = () => {
@@ -12,10 +12,18 @@ const save = () => {
 const app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const euro = n => Math.round(+n || 0).toLocaleString('fr-FR') + ' €';
+const jeux = n => n + (n > 1 ? ' jeux' : ' jeu');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const pts = (l, v) => l + ' ' + '.'.repeat(Math.max(2, 12 - l.length)) + ' ' + v;
-const melanger = a => a.map(x => [Math.random(), x]).sort((p, q) => p[0] - q[0]).map(p => p[1]);
+const jour = () => new Date().toISOString().slice(0, 10);
+function graine(s) { // hasard identique toute la journée
+  let h = 1779033703 ^ s.length;
+  for (let i = 0; i < s.length; i++) { h = Math.imul(h ^ s.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
+  return () => { h = Math.imul(h ^ h >>> 16, 2246822507); h = Math.imul(h ^ h >>> 13, 3266489909); return ((h ^= h >>> 16) >>> 0) / 4294967296; };
+}
+const melanger = (a, r = Math.random) => a.map(x => [r(), x]).sort((p, q) => p[0] - q[0]).map(p => p[1]);
 const tailleEbay = (u, t) => String(u || '').replace(/s-l\d+\./, 's-l' + t + '.');
+const ebayLien = q => 'https://www.ebay.fr/sch/i.html?_nkw=' + encodeURIComponent(q);
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('on');
@@ -28,17 +36,39 @@ const ICO = {
 
 /* ---------- Données de référence ---------- */
 const CATALOGUE = [
-  ['Ball', 'AC-01', 1980, 'Silver'], ['Fire', 'RC-04', 1980, 'Silver'],
-  ['Octopus', 'OC-22', 1981, 'Wide Screen'], ['Parachute', 'PR-21', 1981, 'Wide Screen'],
-  ['Donkey Kong', 'DK-52', 1982, 'Multi Screen'], ['Oil Panic', 'OP-51', 1982, 'Multi Screen'],
-  ['Mickey & Donald', 'DM-53', 1982, 'Multi Screen'], ['Green House', 'GH-54', 1982, 'Multi Screen'],
-  ['Donkey Kong Jr.', 'DJ-101', 1982, 'New Wide Screen'], ['Zelda', 'ZL-65', 1989, 'Multi Screen'],
-  ['Super Mario Bros.', 'YM-105', 1988, 'New Wide Screen']
+  ['Ball', 'AC-01', 1980, 'Silver'], ['Flagman', 'FL-02', 1980, 'Silver'], ['Vermin', 'MT-03', 1980, 'Silver'],
+  ['Fire', 'RC-04', 1980, 'Silver'], ['Judge', 'IP-05', 1980, 'Silver'],
+  ['Manhole', 'MH-06', 1981, 'Gold'], ['Helmet', 'CN-07', 1981, 'Gold'], ['Lion', 'LN-08', 1981, 'Gold'],
+  ['Parachute', 'PR-21', 1981, 'Wide Screen'], ['Octopus', 'OC-22', 1981, 'Wide Screen'], ['Popeye', 'PP-23', 1981, 'Wide Screen'],
+  ['Chef', 'FP-24', 1981, 'Wide Screen'], ['Mickey Mouse', 'MC-25', 1981, 'Wide Screen'], ['Egg', 'EG-26', 1981, 'Wide Screen'],
+  ['Fire', 'FR-27', 1981, 'Wide Screen'], ['Turtle Bridge', 'TL-28', 1982, 'Wide Screen'], ['Fire Attack', 'ID-29', 1982, 'Wide Screen'],
+  ['Snoopy Tennis', 'SP-30', 1982, 'Wide Screen'],
+  ['Oil Panic', 'OP-51', 1982, 'Multi Screen'], ['Donkey Kong', 'DK-52', 1982, 'Multi Screen'], ['Mickey & Donald', 'DM-53', 1982, 'Multi Screen'],
+  ['Green House', 'GH-54', 1982, 'Multi Screen'], ['Donkey Kong II', 'JR-55', 1983, 'Multi Screen'], ['Mario Bros.', 'MW-56', 1983, 'Multi Screen'],
+  ['Rain Shower', 'LP-57', 1983, 'Multi Screen'], ['Life Boat', 'TC-58', 1983, 'Multi Screen'], ['Pinball', 'PB-59', 1983, 'Multi Screen'],
+  ['Black Jack', 'BJ-60', 1985, 'Multi Screen'], ['Squish', 'MG-61', 1986, 'Multi Screen'], ['Bomb Sweeper', 'BD-62', 1987, 'Multi Screen'],
+  ['Safebuster', 'JB-63', 1988, 'Multi Screen'], ['Gold Cliff', 'MV-64', 1988, 'Multi Screen'], ['Zelda', 'ZL-65', 1989, 'Multi Screen'],
+  ['Donkey Kong Jr.', 'DJ-101', 1982, 'New Wide Screen'], ["Mario's Cement Factory", 'ML-102', 1983, 'New Wide Screen'],
+  ['Manhole', 'NH-103', 1983, 'New Wide Screen'], ['Tropical Fish', 'TF-104', 1985, 'New Wide Screen'],
+  ['Super Mario Bros.', 'YM-105', 1988, 'New Wide Screen'], ['Climber', 'DR-106', 1988, 'New Wide Screen'],
+  ['Balloon Fight', 'BF-107', 1988, 'New Wide Screen'], ['Mario the Juggler', 'MB-108', 1991, 'New Wide Screen']
 ].map(([titre, reference, annee, gamme]) => ({ titre, reference, annee, gamme, fabricant: 'Nintendo' }));
 const ETATS = ['Neuf', 'Excellent', 'Très bon', 'Bon', 'Moyen', 'Pour pièces'];
 const MARCHE = ['Fonctionne', 'Ne fonctionne pas', 'Non testé'];
 const COMPLET = ['Console seule', 'Avec boîte', 'Avec notice', 'Complet (boîte + notice)'];
 const SUSPECT = /(repro|réplique|replica|coque|shell|boîte seule|box only|notice seule|manual only|for parts|lot de)/i;
+const FAITS = [
+  "Gunpei Yokoi aurait eu l'idée des Game & Watch en voyant un homme d'affaires s'amuser avec sa calculatrice dans le train.",
+  'Le tout premier Game & Watch, Ball (AC-01), est sorti en 1980.',
+  'La croix directionnelle est apparue pour la première fois sur le Game & Watch Donkey Kong (DK-52) en 1982.',
+  "Chaque Game & Watch sert aussi d'horloge : c'est le « Watch » de son nom.",
+  'Les modèles Multi Screen à deux écrans sont souvent cités comme une inspiration de la Nintendo DS.',
+  'Mario the Juggler (MB-108), sorti en 1991, est le dernier Game & Watch de la série d\'origine.',
+  'Nintendo a ressorti des Game & Watch Super Mario Bros. en 2020 et Zelda en 2021.',
+  'Conseil : une boîte et une notice en bon état peuvent faire nettement monter la valeur d\'un jeu.',
+  'Conseil : vérifiez toujours le compartiment à piles. Les traces d\'oxydation sont un défaut fréquent.',
+  'Conseil : retirez les piles des jeux exposés pour éviter qu\'elles ne coulent.'
+];
 
 /* ---------- Photos (IndexedDB) ---------- */
 const dbP = new Promise((ok, ko) => {
@@ -82,6 +112,7 @@ async function relais(action, extra = {}) {
   if (!r.ok || j.ok === false) throw new Error(j.erreur || j.error || 'Erreur ' + r.status);
   return j;
 }
+const ebayOk = () => par.url && par.ebay !== false;
 const prixDe = a => {
   const v = a.prix ?? a.price?.value ?? a.price ?? a.extracted_price;
   return typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(',', '.').replace(/[^\d.]/g, '')) || 0;
@@ -95,17 +126,20 @@ function filtrer(a) {
 }
 
 /* ---------- Navigation ---------- */
-let cur = null, choixLens = [], choixWeb = [], filtre = { q: '', fav: false };
+let cur = null, choixLens = [], choixWeb = [], filtre = { q: '', fav: false }, autoLens = false;
 function go(p, arg) {
   const cle = p === 'fiche' && !arg ? 'nouveau' : p;
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('on', b.dataset.go === cle));
   window.scrollTo(0, 0);
   ({ accueil: pAccueil, collection: pCollection, fiche: pFiche, recherches: pRecherches, reglages: pReglages })[p](arg);
 }
-const carte = j => {
+const fond = j => {
   const ph = j.photos?.[0], web = j.imageWeb;
-  const attr = ph ? `data-ph="${ph}"` : web ? `style="background-image:url('${esc(web)}')"` : '';
-  return `<button class="carte" data-fiche="${j.id}"><div class="img" ${attr}>${ph || web ? '' : 'G&amp;W'}</div>
+  return { attr: ph ? `data-ph="${ph}"` : web ? `style="background-image:url('${esc(web)}')"` : '', vide: !ph && !web };
+};
+const carte = j => {
+  const f = fond(j);
+  return `<button class="carte" data-fiche="${j.id}"><div class="img" ${f.attr}>${f.vide ? 'G&amp;W' : ''}</div>
   <div class="info"><b>${j.favori ? '★ ' : ''}${esc(j.titre)}</b><small>${esc([j.reference, j.annee].filter(Boolean).join(' · '))}</small>
   ${j.valeur ? `<div class="prix">${euro(j.valeur)}</div>` : ''}</div></button>`;
 };
@@ -117,51 +151,139 @@ async function chargerPhotos() {
 }
 
 /* ---------- Accueil ---------- */
+const possedes = () => new Set(col.map(j => (j.reference || '').toUpperCase()).filter(Boolean));
+const voulu = ref => rech.some(r => r.titre.toUpperCase().includes(ref));
+const aDecouvrir = () => {
+  const p = possedes();
+  return melanger(CATALOGUE.filter(c => !p.has(c.reference) && !voulu(c.reference)), graine('d' + jour())).slice(0, 6);
+};
+
 function pAccueil() {
   const val = col.reduce((s, j) => s + (+j.valeur || 0), 0);
   const paye = col.reduce((s, j) => s + (+j.prixAchat || 0), 0);
   const est = col.filter(j => j.valeur).length;
+  const pv = col.filter(j => j.valeur && j.prixAchat).reduce((s, j) => s + j.valeur - j.prixAchat, 0);
+  const p = possedes(), nbCat = CATALOGUE.filter(c => p.has(c.reference)).length;
+  const r = graine(jour());
+  const vedette = col.length ? col[Math.floor(r() * col.length)] : null;
+  const fait = FAITS[Math.floor(r() * FAITS.length)];
   const derniers = [...col].sort((a, b) => (b.ajout || 0) - (a.ajout || 0)).slice(0, 4);
   app.innerHTML = `
   <section class="console"><div class="rail"></div>
     <div class="lcd"><div class="lbl">Valeur de la collection</div><div class="gros">${euro(val)}</div>
-    <div class="pt">${col.length} jeu${col.length > 1 ? 'x' : ''} · payé ${euro(paye)}</div></div>
-    <div class="bas"><span>${rech.length} recherché${rech.length > 1 ? 's' : ''}</span><span>${est} estimé${est > 1 ? 's' : ''}</span></div>
+    <div class="pt">${jeux(col.length)} · payé ${euro(paye)}</div></div>
+    <div class="bas"><span>${rech.length} recherché${rech.length > 1 ? 's' : ''}</span>
+    <span>${pv ? (pv > 0 ? '+' : '') + euro(pv) + ' de plus-value' : est + ' estimé' + (est > 1 ? 's' : '')}</span></div>
+    <div class="prog-zone"><div class="prog"><span style="width:${Math.round(nbCat / CATALOGUE.length * 100)}%"></span></div>
+    ${nbCat} / ${CATALOGUE.length} modèles Nintendo</div>
   <div class="rail"></div></section>
-  <div class="sect"><h2>Recommandés</h2><button class="lien" data-act="reco-maj">Actualiser</button></div>
+
+  <div class="actions">
+    <button class="action" data-act="vite-photo"><i>📷</i>Identifier</button>
+    <button class="action" data-go="nouveau"><i>＋</i>Ajouter</button>
+    <button class="action" data-go="recherches"><i>☆</i>Recherchés</button>
+  </div>
+
+  ${taches()}
+
+  <div class="sect"><h2>Bonnes affaires</h2><button class="lien" data-act="reco-maj">Actualiser</button></div>
+  <p class="note">Annonces eBay pour vos recherchés et les modèles qui vous manquent.</p>
   <div id="reco" class="defile"><p class="vide petit">Chargement…</p></div>
+
+  <div class="sect"><h2>À découvrir</h2></div>
+  <p class="note">Une sélection qui change chaque jour.</p>
+  <div id="decouv" class="defile"></div>
+
+  ${vedette ? carteVedette(vedette) : ''}
+
+  <div class="sect"><h2>Le saviez-vous ?</h2></div>
+  <div class="lcd-cadre"><div class="lcd fait">${esc(fait)}</div></div>
+
   <div class="sect"><h2>Derniers ajouts</h2><button class="lien" data-go="collection">Toute la vitrine</button></div>
   ${col.length ? `<div class="grille">${derniers.map(carte).join('')}</div>`
     : `<p class="vide">Votre vitrine est vide.</p><button class="btn auto" data-go="nouveau">Ajouter mon premier jeu</button>`}`;
-  chargerPhotos(); recos(false);
+  chargerPhotos(); decouvertes(); recos(false);
 }
+
+function taches() {
+  const t = [];
+  if (!par.url) t.push(['⚙', 'Connectez le relais pour les estimations et les bonnes affaires', 'data-go="reglages"']);
+  const sansPh = col.filter(j => !(j.photos || []).length && !j.imageWeb);
+  if (sansPh.length) t.push(['📷', jeux(sansPh.length) + ' sans photo', `data-fiche="${sansPh[0].id}"`]);
+  const nonEst = col.filter(j => !j.valeur);
+  if (nonEst.length) t.push(['💶', jeux(nonEst.length) + ' à estimer', `data-fiche="${nonEst[0].id}"`]);
+  const vieux = col.filter(j => j.releve && Date.now() - j.releve.date > 90 * 864e5);
+  if (vieux.length) t.push(['⏳', jeux(vieux.length) + ' estimés il y a plus de 3 mois', `data-fiche="${vieux[0].id}"`]);
+  if (col.length && (!par.sauve || Date.now() - par.sauve > 30 * 864e5)) t.push(['💾', 'Pensez à exporter une sauvegarde', 'data-go="reglages"']);
+  if (!t.length) return '';
+  return `<div class="sect"><h2>À faire</h2></div><div class="taches">${t.slice(0, 4).map(([i, txt, a]) =>
+    `<button class="tache" ${a}><i>${i}</i><span>${esc(txt)}</span><b>›</b></button>`).join('')}</div>`;
+}
+
+const carteVedette = j => {
+  const f = fond(j);
+  return `<button class="vedette" data-fiche="${j.id}"><div class="img" ${f.attr}>${f.vide ? 'G&amp;W' : ''}</div>
+  <div><small>Pièce du jour</small><b>${esc(j.titre)}</b><span>${esc([j.reference, j.gamme, j.annee].filter(Boolean).join(' · '))}</span>
+  ${j.valeur ? `<div class="prix">${euro(j.valeur)}</div>` : ''}</div></button>`;
+};
+
+function decouvertes() {
+  const box = document.getElementById('decouv'); if (!box) return;
+  const l = aDecouvrir(), imgs = load(K.imgs, {});
+  if (!l.length) { box.innerHTML = '<p class="vide petit">Bravo, il ne vous manque plus rien du catalogue !</p>'; return; }
+  box.innerHTML = l.map(c => {
+    const img = imgs[c.reference];
+    return `<div class="carte decouv"><div class="img" data-dimg="${c.reference}" ${img ? `style="background-image:url('${esc(img)}')"` : ''}>${img ? '' : `<span class="ref">${c.reference}</span>`}</div>
+    <div class="info"><b>${esc(c.titre)}</b><small>${c.gamme} · ${c.annee}</small>
+    <div class="mini"><button data-act="vouloir" data-ref="${c.reference}">☆ Je le veux</button>
+    <a href="${ebayLien(c.titre + ' ' + c.reference + ' game watch')}" target="_blank" rel="noopener">eBay ›</a></div></div></div>`;
+  }).join('');
+  imagesDecouv(l);
+}
+async function imagesDecouv(l) { // une seule recherche eBay par modèle, puis gardée en mémoire
+  if (!ebayOk()) return;
+  const imgs = load(K.imgs, {});
+  for (const c of l) {
+    if (imgs[c.reference] !== undefined) continue;
+    try {
+      const r = await relais('ebay', { q: c.titre + ' ' + c.reference + ' game watch', limit: 10 });
+      const a = (r.annonces || []).find(x => x.image && !SUSPECT.test(x.titre || ''));
+      imgs[c.reference] = a ? tailleEbay(a.image, 500) : '';
+      localStorage.setItem(K.imgs, JSON.stringify(imgs));
+      const el = document.querySelector(`[data-dimg="${c.reference}"]`);
+      if (el && imgs[c.reference]) { el.style.backgroundImage = `url('${imgs[c.reference]}')`; el.innerHTML = ''; }
+    } catch { break; }
+  }
+}
+
 async function recos(force) {
   const box = document.getElementById('reco'); if (!box) return;
   const msg = t => { box.innerHTML = `<p class="vide petit">${t}</p>`; };
-  if (!par.url) return msg('Configurez le relais dans Réglages pour voir des suggestions eBay.');
+  if (!par.url) return msg('Configurez le relais dans Réglages pour voir les bonnes affaires eBay.');
   if (par.ebay === false) return msg('eBay n\'est pas configuré sur le relais.');
   let c = load(K.reco, null);
   if (force || !c || Date.now() - c.t > 12 * 3600e3) {
     msg('Recherche sur eBay…');
-    const possedes = new Set(col.map(j => (j.reference || '').toUpperCase()).filter(Boolean));
+    const p = possedes();
     const cibles = [
       ...rech.map(r => ({ q: r.titre, max: +r.max || 0 })),
-      ...melanger(CATALOGUE.filter(x => !possedes.has(x.reference))).map(x => ({ q: x.titre + ' ' + x.reference, max: 0 }))
-    ].slice(0, 3);
+      ...melanger(CATALOGUE.filter(x => !p.has(x.reference))).map(x => ({ q: x.titre + ' ' + x.reference, max: 0 }))
+    ].slice(0, 4);
     const items = [], vus = new Set(); let erreur = '';
     for (const ci of cibles) {
       try {
         const r = await relais('ebay', { q: ci.q + (/game ?& ?watch/i.test(ci.q) ? '' : ' game watch'), limit: 20 });
         let n = 0;
         for (const a of r.annonces || []) {
-          if (n >= 4 || !a.image || !a.url || vus.has(a.url) || SUSPECT.test(a.titre || '')) continue;
+          if (n >= 3 || !a.image || !a.url || vus.has(a.url) || SUSPECT.test(a.titre || '')) continue;
           vus.add(a.url); n++;
-          const p = prixDe(a);
-          items.push({ titre: a.titre, prix: p, url: a.url, image: tailleEbay(a.image, 500), bon: !!(ci.max && p && p <= ci.max) });
+          const pr = prixDe(a);
+          items.push({ titre: a.titre, prix: pr, url: a.url, image: tailleEbay(a.image, 500), bon: !!(ci.max && pr && pr <= ci.max) });
         }
       } catch (e) { erreur = e.message; }
     }
-    if (!items.length) return msg(erreur ? '⚠️ ' + esc(erreur) : 'Aucune suggestion pour le moment.');
+    if (!items.length) return msg(erreur ? '⚠️ ' + esc(erreur) : 'Aucune annonce pour le moment.');
+    items.sort((a, b) => b.bon - a.bon);
     c = { t: Date.now(), items }; localStorage.setItem(K.reco, JSON.stringify(c));
   }
   box.innerHTML = c.items.map(x => `<a class="carte" href="${esc(x.url)}" target="_blank" rel="noopener">
@@ -172,7 +294,7 @@ async function recos(force) {
 
 /* ---------- Collection ---------- */
 function pCollection() {
-  app.innerHTML = `<div class="titre-page"><h2>La vitrine</h2><p>${col.length} jeu${col.length > 1 ? 'x' : ''} exposé${col.length > 1 ? 's' : ''}</p></div>
+  app.innerHTML = `<div class="titre-page"><h2>La vitrine</h2><p>${jeux(col.length)} exposé${col.length > 1 ? 's' : ''}</p></div>
   <div class="barre"><input id="q" type="search" placeholder="Titre, référence…" value="${esc(filtre.q)}">
   <button class="btn petit ${filtre.fav ? '' : 'sec'}" data-act="fav-filtre">★</button></div>
   <div id="liste"></div><button class="btn" data-go="nouveau">Ajouter un jeu</button>`;
@@ -258,6 +380,7 @@ async function ajoutPhotos(e) {
       const id = 'ph_' + uid(); await photoPut(id, await reduire(file)); cur.photos.push(id);
     }
     maj({ photos: [...cur.photos] }); renderPhotos(); toast('Photo ajoutée');
+    if (autoLens) { autoLens = false; ACTIONS.lens().catch(err => toast('⚠️ ' + err.message)); }
   } catch (err) { toast('⚠️ ' + err.message); }
   e.target.value = '';
 }
@@ -270,7 +393,7 @@ function pRecherches() {
   <label class="champ"><span>Prix maximum (€)</span><input id="r-max" type="number" inputmode="decimal"></label>
   <button class="btn" data-act="rech-ajout">Ajouter à la liste</button>
   ${rech.length ? rech.map((r, i) => `<div class="item"><div><b>${esc(r.titre)}</b><small>${r.max ? 'max ' + euro(r.max) : 'pas de prix max'}</small></div>
-    <a class="btn petit sec" target="_blank" rel="noopener" href="https://www.ebay.fr/sch/i.html?_nkw=${encodeURIComponent(r.titre + ' game watch')}">eBay</a>
+    <a class="btn petit sec" target="_blank" rel="noopener" href="${ebayLien(r.titre + ' game watch')}">eBay</a>
     <button class="btn petit sec" data-act="rech-suppr" data-i="${i}">✕</button></div>`).join('') : '<p class="vide">Aucun jeu recherché.</p>'}`;
 }
 
@@ -296,7 +419,7 @@ async function importer(e) {
   try {
     const d = JSON.parse(await fichier.text());
     if (!Array.isArray(d.collection)) throw new Error('Fichier invalide');
-    if (!confirm(`Remplacer vos données par cette sauvegarde (${d.collection.length} jeux) ?`)) return;
+    if (!confirm(`Remplacer vos données par cette sauvegarde (${jeux(d.collection.length)}) ?`)) return;
     await idb('readwrite', s => s.clear());
     for (const [id, v] of Object.entries(d.photos || {})) await photoPut(id, v);
     col = d.collection; rech = d.recherches || []; save(); localStorage.removeItem(K.reco);
@@ -308,12 +431,22 @@ async function importer(e) {
 const ACTIONS = {
   'reco-maj': () => recos(true),
   'fav-filtre': () => { filtre.fav = !filtre.fav; pCollection(); },
+  'vite-photo': () => {
+    go('fiche'); autoLens = true;
+    app.querySelector('input[capture]')?.click();
+    toast('Photographiez le jeu : il sera identifié automatiquement');
+  },
+  vouloir: el => {
+    const c = CATALOGUE.find(x => x.reference === el.dataset.ref); if (!c) return;
+    if (!voulu(c.reference)) rech.push({ id: uid(), titre: c.titre + ' ' + c.reference, max: 0 });
+    save(); toast('☆ ' + c.titre + ' ajouté aux recherchés'); pAccueil();
+  },
 
   enregistrer: () => {
     lireForm(); if (!cur.titre) return toast('Le titre est obligatoire');
     const i = col.findIndex(x => x.id === cur.id);
     if (i >= 0) col[i] = cur; else col.push(cur);
-    save(); localStorage.removeItem(K.reco); toast('Enregistré ✓'); go('fiche', cur.id);
+    save(); toast('Enregistré ✓'); go('fiche', cur.id);
   },
   suppr: async () => {
     if (!confirm('Supprimer ce jeu et ses photos ?')) return;
@@ -413,14 +546,16 @@ const ACTIONS = {
     for (const j of col) for (const id of j.photos || []) { const d = await photoGet(id); if (d) photos[id] = d; }
     const blob = new Blob([JSON.stringify({ app: 'pocket-museum', version: VERSION, date: new Date().toISOString(), collection: col, recherches: rech, photos })], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `pocket-museum-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `pocket-museum-${jour()}.json`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    par.sauve = Date.now(); save();
     toast('Sauvegarde téléchargée');
   },
   effacer: async () => {
     if (!confirm('Tout effacer ? Collection, photos et recherchés seront supprimés.')) return;
     if (!confirm('Vraiment ? Cette action est définitive.')) return;
-    await idb('readwrite', s => s.clear()); col = []; rech = []; save(); localStorage.removeItem(K.reco);
+    await idb('readwrite', s => s.clear()); col = []; rech = []; save();
+    localStorage.removeItem(K.reco); localStorage.removeItem(K.imgs);
     toast('Tout a été effacé'); go('accueil');
   }
 };
