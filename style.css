@@ -86,7 +86,8 @@ h2,.h3{font:400 24px/1.1 'Lilita One',sans-serif;text-transform:uppercase;color:
 .decouv .img:not([style]){background:linear-gradient(160deg,var(--lcd1),var(--lcd2))}
 .decouv .ref{font:34px VT323,monospace;color:var(--lcd-t)}
 .mini{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:8px}
-.mini button{border:0;background:var(--bord);color:var(--blanc);border-radius:99px;padding:6px 10px;font:700 12px Rubik,sans-serif;cursor:pointer}
+.mini{flex-wrap:wrap}
+.mini button{border:0;background:var(--bord);color:var(--blanc);border-radius:99px;padding:6px 10px;font:700 12px Rubik,sans-serif;cursor:pointer;white-space:nowrap}
 .mini a{color:var(--bord);font-size:13px;font-weight:700;text-decoration:none}
 
 /* Pièce du jour */
