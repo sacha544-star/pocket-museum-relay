@@ -1,4 +1,4 @@
-const CACHE = 'pocket-museum-v4';
+const CACHE = 'pocket-museum-v5';
 const FICHIERS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FICHIERS))); self.skipWaiting(); });
 self.addEventListener('activate', e => {
