@@ -1,6 +1,6 @@
 (() => {
 'use strict';
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco' };
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 let col = load(K.col, []), rech = load(K.rech, []), par = load(K.par, { url: '', code: '' });
