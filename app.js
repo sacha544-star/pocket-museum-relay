@@ -1,14 +1,17 @@
 (() => {
 'use strict';
-const VERSION = '2.2.1';
-const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco', imgs: 'pm_images' };
+const VERSION = '2.3.0';
+const K = { col: 'pm_collection', rech: 'pm_recherches', par: 'pm_params', reco: 'pm_reco', imgs: 'pm_images', compte: 'pm_compte', sync: 'pm_sync' };
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const SYNC_VIDE = () => ({ t: 0, modif: 0, envoyees: [] });
 let col = load(K.col, []), rech = load(K.rech, []), par = load(K.par, { url: '', code: '' });
-const save = () => {
-  localStorage.setItem(K.col, JSON.stringify(col));
-  localStorage.setItem(K.rech, JSON.stringify(rech));
-  localStorage.setItem(K.par, JSON.stringify(par));
-};
+let compte = load(K.compte, null), sync = load(K.sync, SYNC_VIDE());
+sync.envoyees = sync.envoyees || [];
+const ecrire = () => { localStorage.setItem(K.col, JSON.stringify(col)); localStorage.setItem(K.rech, JSON.stringify(rech)); };
+const saveParams = () => localStorage.setItem(K.par, JSON.stringify(par));
+const saveSync = () => localStorage.setItem(K.sync, JSON.stringify(sync));
+const save = () => { ecrire(); sync.modif = Date.now(); saveSync(); planifier(); };
+
 const app = document.getElementById('app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const euro = n => Math.round(+n || 0).toLocaleString('fr-FR') + ' €';
@@ -27,7 +30,7 @@ const ebayLien = q => 'https://www.ebay.fr/sch/i.html?_nkw=' + encodeURIComponen
 function toast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('on');
-  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 2800);
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('on'), 3000);
 }
 const ICO = {
   dl: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
@@ -109,7 +112,7 @@ async function relais(action, extra = {}) {
     body: JSON.stringify({ code: par.code, action, ...extra })
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.ok === false) throw new Error(j.erreur || j.error || 'Erreur ' + r.status);
+  if (!r.ok || j.ok === false) throw Object.assign(new Error(j.erreur || j.error || 'Erreur ' + r.status), { code: j.code });
   return j;
 }
 const ebayOk = () => par.url && par.ebay !== false;
@@ -125,14 +128,103 @@ function filtrer(a) {
   return a.filter(x => x >= q1 - e && x <= q3 + e);
 }
 
+/* ---------- Compte et synchronisation ---------- */
+let minuteur = null, enCours = false;
+const photosUtilisees = () => [...new Set(col.flatMap(j => j.photos || []))];
+const fusion = (a, b) => [...a, ...b.filter(x => !a.some(y => y.id === x.id))];
+const etatSync = () => sync.modif ? 'en attente' : sync.t ? new Date(sync.t).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'jamais';
+function planifier() {
+  if (!compte) return;
+  clearTimeout(minuteur);
+  minuteur = setTimeout(() => envoyer().catch(() => {}), 4000);
+}
+function finSession(e) {
+  if (e && e.code === 'session') {
+    compte = null; localStorage.removeItem(K.compte);
+    toast('Session expirée : reconnectez-vous dans Réglages');
+  }
+}
+async function envoyer() { // envoie les photos manquantes puis la collection
+  if (!compte || !par.url) return;
+  if (enCours) return planifier();
+  enCours = true; const debut = Date.now();
+  try {
+    for (const id of photosUtilisees()) {
+      if (sync.envoyees.includes(id)) continue;
+      const d = await photoGet(id); if (!d) continue;
+      await relais('photo-put', { jeton: compte.jeton, id, data: d });
+      sync.envoyees.push(id); saveSync();
+    }
+    const r = await relais('sync-put', { jeton: compte.jeton, data: { collection: col, recherches: rech } });
+    sync.t = r.t; if (sync.modif <= debut) sync.modif = 0; saveSync();
+    if (sync.modif) planifier();
+  } catch (e) { finSession(e); throw e; } finally { enCours = false; }
+}
+async function appliquer(d) { // remplace les données du téléphone par celles du compte
+  col = d.collection || []; rech = d.recherches || []; ecrire();
+  localStorage.removeItem(K.reco);
+  let manquantes = 0;
+  for (const id of photosUtilisees()) {
+    if (await photoGet(id)) continue;
+    try {
+      const r = await relais('photo-get', { jeton: compte.jeton, id });
+      if (r.data) { await photoPut(id, r.data); if (!sync.envoyees.includes(id)) sync.envoyees.push(id); }
+      else manquantes++;
+    } catch (e) { manquantes++; finSession(e); if (e.code === 'session') break; }
+  }
+  sync.t = d.t || Date.now(); sync.modif = 0; saveSync();
+  return manquantes;
+}
+async function apresConnexion(nouveau) {
+  if (nouveau) { await envoyer(); return toast('Compte créé, collection sauvegardée ✓'); }
+  const r = await relais('sync-get', { jeton: compte.jeton });
+  if (!r.data) { await envoyer(); return toast('Connecté ✓ Collection envoyée sur le compte'); }
+  const d = r.data, local = col.length || rech.length;
+  if (local) { d.collection = fusion(d.collection || [], col); d.recherches = fusion(d.recherches || [], rech); }
+  const m = await appliquer(d);
+  if (local) { sync.modif = Date.now(); saveSync(); await envoyer(); }
+  toast(`Connecté ✓ ${jeux(col.length)} sur ce téléphone` + (m ? ` (${m} photo${m > 1 ? 's' : ''} introuvable${m > 1 ? 's' : ''})` : ''));
+}
+async function synchroniser(manuel) {
+  if (!compte || !par.url) return;
+  try {
+    const r = await relais('sync-get', { jeton: compte.jeton });
+    const plusRecent = r.data && r.data.t > (sync.t || 0);
+    if (plusRecent && (!sync.modif || confirm('Votre collection a été modifiée sur un autre appareil ET sur celui-ci.\n\nOK : reprendre la version du compte.\nAnnuler : garder celle de ce téléphone.'))) {
+      const m = await appliquer(r.data);
+      toast('Collection mise à jour depuis votre compte' + (m ? ` (${m} photo(s) introuvable(s))` : ''));
+      rafraichir();
+    } else if (sync.modif || !r.data) {
+      await envoyer(); if (manuel) toast('Synchronisé ✓');
+    } else if (manuel) toast('Déjà à jour ✓');
+    if (manuel && page === 'reglages') pReglages();
+  } catch (e) { finSession(e); if (manuel) toast('⚠️ ' + e.message); }
+}
+async function compteAction(type) {
+  if (!par.url) return toast('Configurez d\'abord le relais ci-dessus');
+  const nom = document.getElementById('c-nom').value.trim().toLowerCase();
+  const mdp = document.getElementById('c-mdp').value;
+  if (!/^[a-z0-9_-]{3,30}$/.test(nom)) return toast('Identifiant : 3 à 30 caractères (a-z, 0-9, - ou _)');
+  if (mdp.length < 8) return toast('Mot de passe : 8 caractères minimum');
+  if (type === 'inscription' && mdp !== document.getElementById('c-mdp2').value) return toast('Les deux mots de passe ne correspondent pas');
+  toast(type === 'inscription' ? 'Création du compte…' : 'Connexion…');
+  const r = await relais(type, { nom, mdp });
+  compte = { nom: r.nom, jeton: r.jeton }; localStorage.setItem(K.compte, JSON.stringify(compte));
+  sync = SYNC_VIDE(); saveSync();
+  await apresConnexion(type === 'inscription');
+  pReglages();
+}
+
 /* ---------- Navigation ---------- */
-let cur = null, choixLens = [], choixWeb = [], filtre = { q: '', fav: false }, autoLens = false;
+let cur = null, choixLens = [], choixWeb = [], filtre = { q: '', fav: false }, autoLens = false, page = 'accueil';
 function go(p, arg) {
+  page = p;
   const cle = p === 'fiche' && !arg ? 'nouveau' : p;
   document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('on', b.dataset.go === cle));
   window.scrollTo(0, 0);
   ({ accueil: pAccueil, collection: pCollection, fiche: pFiche, recherches: pRecherches, reglages: pReglages })[p](arg);
 }
+const rafraichir = () => { if (page !== 'fiche') go(page); };
 const fond = j => {
   const ph = j.photos?.[0], web = j.imageWeb;
   return { attr: ph ? `data-ph="${ph}"` : web ? `style="background-image:url('${esc(web)}')"` : '', vide: !ph && !web };
@@ -175,7 +267,7 @@ function pAccueil() {
     <div class="bas"><span>${rech.length} recherché${rech.length > 1 ? 's' : ''}</span>
     <span>${pv ? (pv > 0 ? '+' : '') + euro(pv) + ' de plus-value' : est + ' estimé' + (est > 1 ? 's' : '')}</span></div>
     <div class="prog-zone"><div class="prog"><span style="width:${Math.round(nbCat / CATALOGUE.length * 100)}%"></span></div>
-    ${nbCat} / ${CATALOGUE.length} modèles Nintendo</div>
+    ${nbCat} / ${CATALOGUE.length} modèles Nintendo${compte ? ' · ☁ ' + esc(compte.nom) : ''}</div>
   <div class="rail"></div></section>
 
   <div class="actions">
@@ -208,13 +300,13 @@ function pAccueil() {
 function taches() {
   const t = [];
   if (!par.url) t.push(['⚙', 'Connectez le relais pour les estimations et les bonnes affaires', 'data-go="reglages"']);
+  if (par.url && !compte) t.push(['☁', 'Créez un compte pour retrouver votre collection sur tous vos appareils', 'data-go="reglages"']);
   const sansPh = col.filter(j => !(j.photos || []).length && !j.imageWeb);
   if (sansPh.length) t.push(['📷', jeux(sansPh.length) + ' sans photo', `data-fiche="${sansPh[0].id}"`]);
   const nonEst = col.filter(j => !j.valeur);
   if (nonEst.length) t.push(['💶', jeux(nonEst.length) + ' à estimer', `data-fiche="${nonEst[0].id}"`]);
   const vieux = col.filter(j => j.releve && Date.now() - j.releve.date > 90 * 864e5);
   if (vieux.length) t.push(['⏳', jeux(vieux.length) + ' estimés il y a plus de 3 mois', `data-fiche="${vieux[0].id}"`]);
-  if (col.length && (!par.sauve || Date.now() - par.sauve > 30 * 864e5)) t.push(['💾', 'Pensez à exporter une sauvegarde', 'data-go="reglages"']);
   if (!t.length) return '';
   return `<div class="sect"><h2>À faire</h2></div><div class="taches">${t.slice(0, 4).map(([i, txt, a]) =>
     `<button class="tache" ${a}><i>${i}</i><span>${esc(txt)}</span><b>›</b></button>`).join('')}</div>`;
@@ -402,20 +494,33 @@ function pRecherches() {
     <button class="btn petit sec" data-act="rech-suppr" data-i="${i}">✕</button></div>`).join('') : '<p class="vide">Aucun jeu recherché.</p>'}`;
 }
 
-/* ---------- Réglages et sauvegarde ---------- */
+/* ---------- Réglages, compte et sauvegarde ---------- */
 async function pReglages() {
   const nbPh = await idb('readonly', s => s.count()).catch(() => 0);
+  const blocCompte = compte ? `
+  <div class="lcd-cadre"><div class="lcd lcd-liste">${pts('Compte', esc(compte.nom))}\n${pts('Synchro', etatSync())}</div></div>
+  <button class="btn" data-act="sync-maintenant">☁ Synchroniser maintenant</button>
+  <button class="btn sec" data-act="deconnexion">Se déconnecter</button>
+  <p class="note">Chaque modification est envoyée automatiquement sur votre compte. Sur un autre appareil : configurez le relais, puis connectez-vous avec le même identifiant.</p>`
+  : `${par.url ? '' : '<p class="note">⚠️ Configurez d\'abord le relais ci-dessus.</p>'}
+  <label class="champ"><span>Identifiant</span><input id="c-nom" autocomplete="username" autocapitalize="none" autocorrect="off" placeholder="ex. sacha"></label>
+  <label class="champ"><span>Mot de passe (8 caractères minimum)</span><input id="c-mdp" type="password" autocomplete="current-password"></label>
+  <label class="champ"><span>Confirmer le mot de passe (création de compte seulement)</span><input id="c-mdp2" type="password" autocomplete="new-password"></label>
+  <div class="deux"><button class="btn" data-act="connexion">Se connecter</button><button class="btn sec" data-act="inscription">Créer un compte</button></div>
+  <p class="note">Le mot de passe ne peut pas être récupéré : notez-le bien.</p>`;
   app.innerHTML = `<div class="titre-page"><h2>Relais</h2><p>Connexion à votre Worker Cloudflare</p></div>
   <label class="champ"><span>Adresse du Worker</span><input id="p-url" type="url" placeholder="https://pocket-museum-relay.xxx.workers.dev" value="${esc(par.url)}"></label>
   <label class="champ"><span>Code secret</span><input id="p-code" type="password" value="${esc(par.code)}"></label>
   <button class="btn" data-act="par-save">Enregistrer et tester</button>
   <div class="lcd-cadre" id="test" hidden><div class="lcd lcd-liste" id="test-txt"></div></div>
-  <div class="titre-page"><h2>Sauvegarde</h2><p>Vos données restent sur ce téléphone</p></div>
+  <div class="titre-page"><h2>Compte</h2><p>Retrouvez votre collection sur tous vos appareils</p></div>
+  ${blocCompte}
+  <div class="titre-page"><h2>Sauvegarde</h2><p>Une copie de secours dans un fichier</p></div>
   <div class="lcd-cadre"><div class="lcd lcd-liste">${pts('Jeux', col.length)}\n${pts('Photos', nbPh)}\n${pts('Recherchés', rech.length)}</div></div>
   <button class="btn" data-act="export">${ICO.dl} Exporter (photos incluses)</button>
   <label class="btn sec">${ICO.ul} Restaurer une sauvegarde<input type="file" accept="application/json,.json" hidden id="imp"></label>
-  <p class="note">Pas de compte, pas de cloud : pensez à exporter régulièrement. Pour installer l'app, utilisez « Ajouter à l'écran d'accueil » dans votre navigateur.</p>
-  <button class="btn sec danger" data-act="effacer">Tout effacer</button>
+  <p class="note">Pour installer l'app, utilisez « Ajouter à l'écran d'accueil » dans votre navigateur.</p>
+  <button class="btn sec danger" data-act="effacer">Effacer ce téléphone</button>
   <p class="note centre">Pocket Museum v${VERSION}</p>`;
   document.getElementById('imp').addEventListener('change', importer);
 }
@@ -424,7 +529,7 @@ async function importer(e) {
   try {
     const d = JSON.parse(await fichier.text());
     if (!Array.isArray(d.collection)) throw new Error('Fichier invalide');
-    if (!confirm(`Remplacer vos données par cette sauvegarde (${jeux(d.collection.length)}) ?`)) return;
+    if (!confirm(`Remplacer vos données par cette sauvegarde (${jeux(d.collection.length)}) ?` + (compte ? '\nElle sera aussi envoyée sur votre compte.' : ''))) return;
     await idb('readwrite', s => s.clear());
     for (const [id, v] of Object.entries(d.photos || {})) await photoPut(id, v);
     col = d.collection; rech = d.recherches || []; save(); localStorage.removeItem(K.reco);
@@ -445,6 +550,19 @@ const ACTIONS = {
     const c = CATALOGUE.find(x => x.reference === el.dataset.ref); if (!c) return;
     if (!voulu(c.reference)) rech.push({ id: uid(), titre: c.titre + ' ' + c.reference, max: 0 });
     save(); toast('☆ ' + c.titre + ' ajouté aux recherchés'); pAccueil();
+  },
+
+  // Compte
+  connexion: () => compteAction('connexion'),
+  inscription: () => compteAction('inscription'),
+  'sync-maintenant': () => { toast('Synchronisation…'); return synchroniser(true); },
+  deconnexion: async () => {
+    if (!confirm('Se déconnecter ? Les données restent sur ce téléphone.')) return;
+    clearTimeout(minuteur);
+    if (sync.modif) await envoyer().catch(() => {});
+    relais('deconnexion', { jeton: compte.jeton }).catch(() => {});
+    compte = null; localStorage.removeItem(K.compte); sync = SYNC_VIDE(); saveSync();
+    toast('Déconnecté'); pReglages();
   },
 
   enregistrer: () => {
@@ -537,13 +655,13 @@ const ACTIONS = {
 
   'par-save': async () => {
     par.url = document.getElementById('p-url').value.trim(); par.code = document.getElementById('p-code').value.trim();
-    save(); localStorage.removeItem(K.reco);
+    saveParams(); localStorage.removeItem(K.reco);
     const box = document.getElementById('test'), txt = document.getElementById('test-txt');
     box.hidden = false; txt.textContent = 'Test en cours…';
     try {
-      const r = await relais('test'); par.ebay = !!r.ebay; save();
+      const r = await relais('test'); par.ebay = !!r.ebay; saveParams();
       const o = v => v ? 'OK' : 'absent';
-      txt.textContent = [pts('Relais', 'OK'), pts('SerpApi', o(r.serpapi)), pts('Lens', o(r.lens)), pts('eBay', o(r.ebay)), pts('Photos KV', o(r.kv))].join('\n');
+      txt.textContent = [pts('Relais', 'OK'), pts('SerpApi', o(r.serpapi)), pts('Lens', o(r.lens)), pts('eBay', o(r.ebay)), pts('Comptes', o(r.comptes))].join('\n');
     } catch (e) { txt.textContent = 'Erreur\n' + e.message; }
   },
   export: async () => {
@@ -553,15 +671,20 @@ const ACTIONS = {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
     a.download = `pocket-museum-${jour()}.json`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    par.sauve = Date.now(); save();
+    par.sauve = Date.now(); saveParams();
     toast('Sauvegarde téléchargée');
   },
   effacer: async () => {
-    if (!confirm('Tout effacer ? Collection, photos et recherchés seront supprimés.')) return;
-    if (!confirm('Vraiment ? Cette action est définitive.')) return;
-    await idb('readwrite', s => s.clear()); col = []; rech = []; save();
+    const msg = compte
+      ? 'Effacer les données de CE téléphone ?\nVous serez déconnecté. Votre compte en ligne n\'est pas touché.'
+      : 'Tout effacer ? Collection, photos et recherchés seront supprimés.';
+    if (!confirm(msg)) return;
+    if (!compte && !confirm('Vraiment ? Cette action est définitive.')) return;
+    clearTimeout(minuteur);
+    compte = null; localStorage.removeItem(K.compte); sync = SYNC_VIDE(); saveSync();
+    await idb('readwrite', s => s.clear()); col = []; rech = []; ecrire();
     localStorage.removeItem(K.reco); localStorage.removeItem(K.imgs);
-    toast('Tout a été effacé'); go('accueil');
+    toast('Téléphone effacé'); go('accueil');
   }
 };
 
@@ -574,6 +697,12 @@ document.addEventListener('click', e => {
   if (f) Promise.resolve().then(() => f(el)).catch(err => toast('⚠️ ' + err.message));
 });
 
+/* ---------- Démarrage ---------- */
 go('accueil');
+synchroniser(false);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') synchroniser(false);
+  else if (compte && sync.modif) { clearTimeout(minuteur); envoyer().catch(() => {}); }
+});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
